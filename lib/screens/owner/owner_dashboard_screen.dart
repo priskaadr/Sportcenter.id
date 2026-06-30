@@ -19,28 +19,46 @@ class _OwnerDashboardScreenState
 
   int currentIndex = 0;
 
-  final List<Widget> pages = [
-    const OwnerHomeScreen(),
-    const OwnerFieldScreen(),
-    const OwnerScheduleScreen(),
-    const OwnerChatScreen(),
-    const OwnerProfileScreen(),
-  ];
+  late final List<Widget> pages;
+
+  @override
+  void initState() {
+    super.initState();
+
+    pages = const [
+      OwnerHomeScreen(),
+      OwnerFieldScreen(),
+      OwnerScheduleScreen(),
+      OwnerChatScreen(),
+      OwnerProfileScreen(),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
 
     return Scaffold(
 
-      body: pages[currentIndex],
+      body: IndexedStack(
+        index: currentIndex,
+        children: pages,
+      ),
 
       bottomNavigationBar: BottomNavigationBar(
+
         currentIndex: currentIndex,
 
-        selectedItemColor:
-            const Color(0xff001DFF),
-
         type: BottomNavigationBarType.fixed,
+
+        selectedItemColor: const Color(0xff001DFF),
+
+        unselectedItemColor: Colors.grey,
+
+        selectedFontSize: 12,
+
+        unselectedFontSize: 12,
+
+        elevation: 8,
 
         onTap: (index) {
           setState(() {
@@ -51,27 +69,32 @@ class _OwnerDashboardScreenState
         items: const [
 
           BottomNavigationBarItem(
-            icon: Icon(Icons.home),
+            icon: Icon(Icons.home_rounded),
+            activeIcon: Icon(Icons.home),
             label: "Beranda",
           ),
 
           BottomNavigationBarItem(
-            icon: Icon(Icons.sports_soccer),
+            icon: Icon(Icons.sports_soccer_outlined),
+            activeIcon: Icon(Icons.sports_soccer),
             label: "Lapangan",
           ),
 
           BottomNavigationBarItem(
-            icon: Icon(Icons.calendar_month),
+            icon: Icon(Icons.calendar_month_outlined),
+            activeIcon: Icon(Icons.calendar_month),
             label: "Jadwal",
           ),
 
           BottomNavigationBarItem(
-            icon: Icon(Icons.chat),
+            icon: Icon(Icons.chat_bubble_outline),
+            activeIcon: Icon(Icons.chat),
             label: "Chat",
           ),
 
           BottomNavigationBarItem(
-            icon: Icon(Icons.person),
+            icon: Icon(Icons.person_outline),
+            activeIcon: Icon(Icons.person),
             label: "Profil",
           ),
         ],
