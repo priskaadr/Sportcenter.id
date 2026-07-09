@@ -1,157 +1,202 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'chat/owner_chat_room_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:table_calendar/table_calendar.dart';
 
 class OwnerScheduleScreen extends StatefulWidget {
   const OwnerScheduleScreen({super.key});
 
   @override
-  State<OwnerScheduleScreen> createState() =>
-      _OwnerScheduleScreenState();
+  State<OwnerScheduleScreen> createState() => _OwnerScheduleScreenState();
 }
 
-class _OwnerScheduleScreenState
-    extends State<OwnerScheduleScreen> {
+class _OwnerScheduleScreenState extends State<OwnerScheduleScreen> {
+  //-------------------------------------------------------
+  // Supabase
+  //-------------------------------------------------------
 
   final supabase = Supabase.instance.client;
 
+  //-------------------------------------------------------
+  // Controller
+  //-------------------------------------------------------
+
+  final TextEditingController searchController = TextEditingController();
+
+  //-------------------------------------------------------
+  // Formatter
+  //-------------------------------------------------------
+
+  final currency = NumberFormat.currency(
+    locale: "id_ID",
+    symbol: "Rp ",
+    decimalDigits: 0,
+  );
+
+  final formatter = DateFormat("dd MMM yyyy", "id_ID");
+
+  //-------------------------------------------------------
+  // Data
+  //-------------------------------------------------------
+
   bool isLoading = true;
 
-  DateTime focusedDay = DateTime.now();
-  DateTime selectedDay = DateTime.now();
+  int selectedIndex = 0;
 
-  List ownerFields = [];
-  List schedules = [];
-  List bookings = [];
-  List payments = [];
+  List<Map<String, dynamic>> allBookings = [];
 
-  Map<DateTime, String> calendarStatus = {};
+  List<Map<String, dynamic>> pendingBookings = [];
 
-  int totalBooking = 0;
-  int pendingBooking = 0;
-  int approvedBooking = 0;
+  List<Map<String, dynamic>> approvedBookings = [];
+
+  List<Map<String, dynamic>> rejectedBookings = [];
+
+  List<Map<String, dynamic>> finishedBookings = [];
+
+  List<Map<String, dynamic>> filteredBookings = [];
+
+  //-------------------------------------------------------
+  // Realtime
+  //-------------------------------------------------------
+
+  RealtimeChannel? bookingChannel;
+
+  //-------------------------------------------------------
+  // Init
+  //-------------------------------------------------------
 
   @override
   void initState() {
     super.initState();
-    loadData();
+
+    loadBookings();
+
+    realtimeBooking();
+
+    searchController.addListener(() {
+      filterBookings();
+    });
   }
 
-  Future<void> loadData() async {
+  //-------------------------------------------------------
+  // Dispose
+  //-------------------------------------------------------
 
+  @override
+  void dispose() {
+    searchController.dispose();
+
+    if (bookingChannel != null) {
+      supabase.removeChannel(bookingChannel!);
+    }
+
+    super.dispose();
+  }
+
+  //-------------------------------------------------------
+  // Realtime
+  //-------------------------------------------------------
+
+  void realtimeBooking() {
+    bookingChannel = supabase.channel("owner-booking");
+
+    bookingChannel!
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: "public",
+          table: "bookings",
+          callback: (payload) async {
+            await loadBookings();
+          },
+        )
+        .subscribe();
+  }
+
+  //-------------------------------------------------------
+  // Load Booking
+  //-------------------------------------------------------
+
+  Future<void> loadBookings() async {
     try {
-
       setState(() {
         isLoading = true;
       });
 
-      final user = supabase.auth.currentUser;
+      final ownerId = supabase.auth.currentUser!.id;
 
-      if (user == null) return;
+      final fieldResult = await supabase
+          .from("fields")
+          .select("id")
+          .eq("owner_id", ownerId);
 
-      //--------------------------------------------------
-      // FIELD OWNER
-      //--------------------------------------------------
+      final fieldIds = fieldResult
+          .map<String>((e) => e["id"] as String)
+          .toList();
 
-      ownerFields = await supabase
-          .from('fields')
-          .select()
-          .eq('owner_id', user.id);
-
-      if (ownerFields.isEmpty) {
-
+      if (fieldIds.isEmpty) {
         setState(() {
+          allBookings = [];
+          pendingBookings = [];
+          approvedBookings = [];
+          rejectedBookings = [];
+          finishedBookings = [];
+          filteredBookings = [];
           isLoading = false;
         });
 
         return;
       }
 
-      final fieldIds =
-          ownerFields.map((e) => e['id']).toList();
+      final bookingResult = await supabase
+          .from("bookings")
+          .select("""
+              *,
+              fields(
+                field_name,
+                location
+              ),
+              profiles!bookings_customer_id_fkey(
+                full_name,
+                phone,
+                avatar_url
+              ),
+              payments(
+                id,
+                amount,
+                payment_status,
+                payment_method,
+                payment_proof,
+                payment_date
+              )
+          """)
+          .inFilter("field_id", fieldIds)
+          .order("booking_date", ascending: false);
 
-      //--------------------------------------------------
-      // SCHEDULE
-      //--------------------------------------------------
+      allBookings = List<Map<String, dynamic>>.from(bookingResult);
 
-      schedules = await supabase
-          .from('schedules')
-          .select()
-          .inFilter(
-            'field_id',
-            fieldIds,
-          );
+      pendingBookings = allBookings
+          .where((e) => e["status"] == "pending")
+          .toList();
 
-      //--------------------------------------------------
-      // BOOKING
-      //--------------------------------------------------
+      approvedBookings = allBookings
+          .where((e) => e["status"] == "approved")
+          .toList();
 
-      bookings = await supabase
-          .from('bookings')
-          .select()
-          .inFilter(
-            'field_id',
-            fieldIds,
-          )
-          .order(
-            'created_at',
-            ascending: false,
-          );
+      rejectedBookings = allBookings
+          .where((e) => e["status"] == "rejected")
+          .toList();
 
-      //--------------------------------------------------
-      // PAYMENT
-      //--------------------------------------------------
+      finishedBookings = allBookings
+          .where((e) => e["status"] == "finished")
+          .toList();
 
-      payments = await supabase
-          .from('payments')
-          .select();
-
-      //--------------------------------------------------
-      // HITUNG STATUS
-      //--------------------------------------------------
-
-      totalBooking = bookings.length;
-
-      pendingBooking = bookings.where(
-        (e) =>
-            e['status'] == 'pending' ||
-            e['status'] == 'booked',
-      ).length;
-
-      approvedBooking = bookings.where(
-        (e) =>
-            e['status'] == 'approved',
-      ).length;
-
-      //--------------------------------------------------
-      // KALENDER
-      //--------------------------------------------------
-
-      calendarStatus.clear();
-
-      for (var item in schedules) {
-
-        final date =
-            DateTime.parse(item['date']);
-
-        calendarStatus[
-            DateTime(
-              date.year,
-              date.month,
-              date.day,
-            )] = item['status'];
-      }
+      filterBookings();
 
       setState(() {
         isLoading = false;
       });
-
     } catch (e) {
-
-      debugPrint(
-        "Owner Schedule Error : $e",
-      );
+      debugPrint(e.toString());
 
       setState(() {
         isLoading = false;
@@ -159,1243 +204,765 @@ class _OwnerScheduleScreenState
     }
   }
 
-  //--------------------------------------------------
-  // MENCARI DATA FIELD
-  //--------------------------------------------------
+  //-------------------------------------------------------
+  // Filter
+  //-------------------------------------------------------
 
-  Map? getField(String id) {
+  void filterBookings() {
+    String keyword = searchController.text.toLowerCase().trim();
 
-    try {
+    List<Map<String, dynamic>> source;
 
-      return ownerFields.firstWhere(
-        (e) => e['id'] == id,
-      );
+    switch (selectedIndex) {
+      case 1:
+        source = pendingBookings;
+        break;
 
-    } catch (_) {
+      case 2:
+        source = approvedBookings;
+        break;
 
-      return null;
-    }
-  }
+      case 3:
+        source = rejectedBookings;
+        break;
 
-  //--------------------------------------------------
-  // MENCARI DATA SCHEDULE
-  //--------------------------------------------------
-
-  Map? getSchedule(String id) {
-
-    try {
-
-      return schedules.firstWhere(
-        (e) => e['id'] == id,
-      );
-
-    } catch (_) {
-
-      return null;
-    }
-  }
-
-  //--------------------------------------------------
-  // MENCARI DATA PAYMENT
-  //--------------------------------------------------
-
-  Map? getPayment(String bookingId) {
-
-    try {
-
-      return payments.firstWhere(
-        (e) =>
-            e['booking_id'] ==
-            bookingId,
-      );
-
-    } catch (_) {
-
-      return null;
-    }
-  }
-
-  //--------------------------------------------------
-  // WARNA STATUS KALENDER
-  //--------------------------------------------------
-
-  Color getCalendarColor(
-      DateTime day) {
-
-    final key = DateTime(
-      day.year,
-      day.month,
-      day.day,
-    );
-
-    final status =
-        calendarStatus[key];
-
-    if (day.isBefore(
-      DateTime.now().subtract(
-        const Duration(days: 1),
-      ),
-    )) {
-
-      return Colors.grey;
-    }
-
-    if (status == null) {
-
-      return Colors.blue;
-    }
-
-    switch (status) {
-
-      case "available":
-        return Colors.blue;
-
-      case "booked":
-        return Colors.amber;
-
-      case "occupied":
-        return Colors.grey;
+      case 4:
+        source = finishedBookings;
+        break;
 
       default:
-        return Colors.blue;
+        source = allBookings;
+    }
+
+    if (keyword.isEmpty) {
+      filteredBookings = List.from(source);
+    } else {
+      filteredBookings = source.where((booking) {
+        final profile = booking["profiles"];
+
+        final name = (profile?["full_name"] ?? "").toString().toLowerCase();
+
+        final field = booking["fields"];
+
+        final fieldName = (field?["field_name"] ?? "").toString().toLowerCase();
+
+        return name.contains(keyword) || fieldName.contains(keyword);
+      }).toList();
+    }
+
+    if (mounted) {
+      setState(() {});
     }
   }
 
-  //--------------------------------------------------
-  // ACC BOOKING
-  //--------------------------------------------------
+  //-------------------------------------------------------
+  // Refresh
+  //-------------------------------------------------------
 
-  Future<void> approveBooking(Map booking) async {
+  Future<void> refreshData() async {
+    await loadBookings();
+  }
 
+  //-------------------------------------------------------
+  // Approve Booking
+  //-------------------------------------------------------
+
+  Future<void> approveBooking(Map<String, dynamic> booking) async {
     try {
-
       await supabase
-          .from('bookings')
-          .update({
-            'status': 'approved',
-          })
-          .eq(
-            'id',
-            booking['id'],
-          );
-
-      await supabase
-          .from('schedules')
-          .update({
-            'status': 'occupied',
-          })
-          .eq(
-            'id',
-            booking['schedule_id'],
-          );
+          .from("bookings")
+          .update({"status": "approved"})
+          .eq("id", booking["id"]);
 
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            "Booking berhasil di ACC",
-          ),
-          backgroundColor: Colors.green,
-        ),
+        const SnackBar(content: Text("Booking berhasil disetujui")),
       );
 
-      loadData();
-
+      await loadBookings();
     } catch (e) {
+      if (!mounted) return;
 
-      debugPrint(e.toString());
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString()),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 
-  //--------------------------------------------------
-  // CARD STATISTIK
-  //--------------------------------------------------
+  //-------------------------------------------------------
+  // Reject Booking
+  //-------------------------------------------------------
 
-  Widget statCard({
+  Future<void> rejectBooking(Map<String, dynamic> booking) async {
+    try {
+      await supabase
+          .from("bookings")
+          .update({"status": "rejected"})
+          .eq("id", booking["id"]);
 
-    required String title,
-    required String value,
-    required IconData icon,
+      if (!mounted) return;
 
-  }) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Booking berhasil ditolak")));
 
-    return Expanded(
+      await loadBookings();
+    } catch (e) {
+      if (!mounted) return;
 
-      child: Container(
-
-        padding: const EdgeInsets.all(16),
-
-        decoration: BoxDecoration(
-
-          color: Colors.white,
-
-          borderRadius:
-              BorderRadius.circular(20),
-
-          boxShadow: const [
-
-            BoxShadow(
-
-              color: Colors.black12,
-
-              blurRadius: 8,
-
-              offset: Offset(0,3),
-
-            )
-
-          ],
-
-        ),
-
-        child: Column(
-
-          children: [
-
-            CircleAvatar(
-
-              radius: 22,
-
-              backgroundColor:
-                  const Color(0xff001DFF)
-                      .withOpacity(.1),
-
-              child: Icon(
-
-                icon,
-
-                color: const Color(0xff001DFF),
-
-              ),
-
-            ),
-
-            const SizedBox(height: 12),
-
-            Text(
-
-              value,
-
-              style: const TextStyle(
-
-                fontWeight: FontWeight.bold,
-
-                fontSize: 22,
-
-              ),
-
-            ),
-
-            const SizedBox(height: 4),
-
-            Text(
-
-              title,
-
-              style: const TextStyle(
-
-                color: Colors.grey,
-
-              ),
-
-            ),
-
-          ],
-
-        ),
-
-      ),
-
-    );
-
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
   }
 
-  //--------------------------------------------------
-  // STATUS BOOKING
-  //--------------------------------------------------
+  //-------------------------------------------------------
+  // Finish Booking
+  //-------------------------------------------------------
 
-  Color bookingStatusColor(String status){
+  Future<void> finishBooking(Map<String, dynamic> booking) async {
+    try {
+      await supabase
+          .from("bookings")
+          .update({"status": "finished"})
+          .eq("id", booking["id"]);
 
-    switch(status){
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Booking selesai")));
+
+      await loadBookings();
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  //-------------------------------------------------------
+  // Dialog Approve
+  //-------------------------------------------------------
+
+  Future<void> showApproveDialog(Map<String, dynamic> booking) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Konfirmasi"),
+          content: const Text("Setujui booking ini?"),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, false);
+              },
+              child: const Text("Batal"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context, true);
+              },
+              child: const Text("Setujui"),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result == true) {
+      await approveBooking(booking);
+    }
+  }
+
+  //-------------------------------------------------------
+  // Dialog Reject
+  //-------------------------------------------------------
+
+  Future<void> showRejectDialog(Map<String, dynamic> booking) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Konfirmasi"),
+          content: const Text("Tolak booking ini?"),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, false);
+              },
+              child: const Text("Batal"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context, true);
+              },
+              child: const Text("Tolak"),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result == true) {
+      await rejectBooking(booking);
+    }
+  }
+
+  //-------------------------------------------------------
+  // Dialog Finish
+  //-------------------------------------------------------
+
+  Future<void> showFinishDialog(Map<String, dynamic> booking) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Konfirmasi"),
+          content: const Text("Booking sudah selesai?"),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, false);
+              },
+              child: const Text("Belum"),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context, true);
+              },
+              child: const Text("Selesai"),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result == true) {
+      await finishBooking(booking);
+    }
+  }
+
+  //-------------------------------------------------------
+  // Status Color
+  //-------------------------------------------------------
+
+  Color statusColor(String status) {
+    switch (status) {
+      case "pending":
+        return Colors.orange;
 
       case "approved":
         return Colors.green;
 
-      case "pending":
-        return Colors.orange;
+      case "rejected":
+        return Colors.red;
 
-      case "booked":
-        return Colors.orange;
+      case "finished":
+        return Colors.blue;
 
       default:
         return Colors.grey;
     }
-
   }
 
-  //--------------------------------------------------
-  // STATUS PEMBAYARAN
-  //--------------------------------------------------
+  //-------------------------------------------------------
+  // Status Text
+  //-------------------------------------------------------
 
-  Color paymentColor(String status){
+  String statusText(String status) {
+    switch (status) {
+      case "pending":
+        return "Menunggu";
 
-    if(status=="paid"){
+      case "approved":
+        return "Disetujui";
 
-      return Colors.green;
+      case "rejected":
+        return "Ditolak";
 
+      case "finished":
+        return "Selesai";
+
+      default:
+        return status;
     }
-
-    return Colors.red;
-
   }
 
-  //--------------------------------------------------
-  // BOOKING CARD
-  //--------------------------------------------------
+  //-------------------------------------------------------
+  // Format Date
+  //-------------------------------------------------------
 
-  Widget bookingCard(Map booking){
+  String formatDate(dynamic value) {
+    if (value == null) return "-";
 
-    final field =
-        getField(
-          booking['field_id'],
-        );
+    return formatter.format(DateTime.parse(value.toString()));
+  }
 
-    final schedule =
-        getSchedule(
-          booking['schedule_id'],
-        );
+  //-------------------------------------------------------
+  // Customer Name
+  //-------------------------------------------------------
 
-    final payment =
-        getPayment(
-          booking['id'],
-        );
+  String customerName(Map<String, dynamic> booking) {
+    return booking["profiles"]?["full_name"] ?? "Customer";
+  }
 
-    if(field==null || schedule==null){
+  //-------------------------------------------------------
+  // Field Name
+  //-------------------------------------------------------
 
-      return const SizedBox();
+  String fieldName(Map<String, dynamic> booking) {
+    return booking["fields"]?["field_name"] ?? "-";
+  }
 
+  //-------------------------------------------------------
+  // Payment
+  //-------------------------------------------------------
+
+  Map<String, dynamic>? paymentData(Map<String, dynamic> booking) {
+    if (booking["payments"] == null) {
+      return null;
     }
 
-    return Container(
+    if (booking["payments"] is List) {
+      final list = booking["payments"] as List;
 
-      margin:
-          const EdgeInsets.only(
-        bottom: 16,
-      ),
+      if (list.isEmpty) return null;
 
-      decoration: BoxDecoration(
+      return list.first;
+    }
 
-        color: Colors.white,
+    return booking["payments"];
+  }
 
-        borderRadius:
-            BorderRadius.circular(20),
+  //-------------------------------------------------------
+  // Booking Card
+  //-------------------------------------------------------
 
-        boxShadow: const [
+  Widget buildBookingCard(Map<String, dynamic> booking) {
+    final payment = paymentData(booking);
 
-          BoxShadow(
-
-            color: Colors.black12,
-
-            blurRadius: 10,
-
-            offset: Offset(0,4),
-
-          )
-
-        ],
-
-      ),
-
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
-
-        padding:
-            const EdgeInsets.all(18),
-
+        padding: const EdgeInsets.all(18),
         child: Column(
-
-          crossAxisAlignment:
-              CrossAxisAlignment.start,
-
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-
+            //----------------------------------
+            // Header
+            //----------------------------------
             Row(
-
               children: [
-
-                Container(
-
-                  padding:
-                      const EdgeInsets.all(10),
-
-                  decoration: BoxDecoration(
-
-                    color: const Color(
-                            0xff001DFF)
-                        .withOpacity(.1),
-
-                    borderRadius:
-                        BorderRadius.circular(
-                            12),
-
-                  ),
-
-                  child: const Icon(
-
-                    Icons.sports_soccer,
-
-                    color:
-                        Color(0xff001DFF),
-
-                  ),
-
+                CircleAvatar(
+                  radius: 26,
+                  backgroundColor: Colors.green.shade100,
+                  child: const Icon(Icons.person, color: Colors.green),
                 ),
 
-                const SizedBox(width:12),
+                const SizedBox(width: 14),
 
                 Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        customerName(booking),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
 
-                  child: Text(
+                      const SizedBox(height: 4),
 
-                    field['field_name'] ?? "-",
-
-                    style: const TextStyle(
-
-                      fontWeight:
-                          FontWeight.bold,
-
-                      fontSize:18,
-
-                    ),
-
+                      Text(
+                        fieldName(booking),
+                        style: TextStyle(color: Colors.grey[700]),
+                      ),
+                    ],
                   ),
-
-                )
-
-              ],
-
-            ),
-
-            const SizedBox(height:15),
-
-            Row(
-
-              children: [
-
-                const Icon(
-
-                  Icons.calendar_month,
-
-                  size:18,
-
-                  color: Colors.grey,
-
                 ),
-
-                const SizedBox(width:8),
-
-                Text(
-
-                  DateFormat(
-                    "dd MMM yyyy",
-                  ).format(
-
-                    DateTime.parse(
-                      schedule['date'],
-                    ),
-
-                  ),
-
-                ),
-
-              ],
-
-            ),
-
-            const SizedBox(height:8),
-
-            Row(
-
-              children: [
-
-                const Icon(
-
-                  Icons.access_time,
-
-                  size:18,
-
-                  color: Colors.grey,
-
-                ),
-
-                const SizedBox(width:8),
-
-                Text(
-
-                  "${schedule['start_time']} - ${schedule['end_time']}",
-
-                ),
-
-              ],
-
-            ),
-
-            const SizedBox(height:16),
-
-            Row(
-
-              children: [
 
                 Container(
-
-                  padding:
-                      const EdgeInsets.symmetric(
-
-                    horizontal:12,
-
-                    vertical:6,
-
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
                   ),
-
                   decoration: BoxDecoration(
-
-                    color: paymentColor(
-
-                      payment?['payment_status']
-                          ?? "unpaid",
-
-                    ),
-
-                    borderRadius:
-                        BorderRadius.circular(20),
-
+                    color: statusColor(booking["status"]),
+                    borderRadius: BorderRadius.circular(30),
                   ),
-
                   child: Text(
-
-                    payment?['payment_status']
-                            ?.toUpperCase() ??
-                        "UNPAID",
-
+                    statusText(booking["status"]),
                     style: const TextStyle(
-
                       color: Colors.white,
-
-                      fontWeight:
-                          FontWeight.bold,
-
+                      fontWeight: FontWeight.bold,
                     ),
-
                   ),
-
                 ),
-
-                const Spacer(),
-
-                Container(
-
-                  padding:
-                      const EdgeInsets.symmetric(
-
-                    horizontal:12,
-
-                    vertical:6,
-
-                  ),
-
-                  decoration: BoxDecoration(
-
-                    color: bookingStatusColor(
-
-                      booking['status'],
-
-                    ),
-
-                    borderRadius:
-                        BorderRadius.circular(20),
-
-                  ),
-
-                  child: Text(
-
-                    booking['status']
-                        .toUpperCase(),
-
-                    style: const TextStyle(
-
-                      color: Colors.white,
-
-                      fontWeight:
-                          FontWeight.bold,
-
-                    ),
-
-                  ),
-
-                ),
-
               ],
-
             ),
 
-            if(
+            const Divider(height: 28),
 
-            booking['status']=="pending" ||
+            //----------------------------------
+            // Detail
+            //----------------------------------
+            detailRow(
+              Icons.calendar_today,
+              "Tanggal",
+              formatDate(booking["booking_date"]),
+            ),
 
-            booking['status']=="booked"
+            detailRow(
+              Icons.schedule,
+              "Jam",
+              "${booking["start_time"]} - ${booking["end_time"]}",
+            ),
 
-            )
+            detailRow(Icons.timer, "Durasi", "${booking["duration"]} Jam"),
 
-            Padding(
+            detailRow(
+              Icons.attach_money,
+              "Total",
+              "Rp ${booking["total_price"]}",
+            ),
 
-              padding:
-                  const EdgeInsets.only(
-                top:18,
+            if (booking["note"] != null &&
+                booking["note"].toString().isNotEmpty)
+              detailRow(Icons.notes, "Catatan", booking["note"]),
+
+            if (payment != null)
+              detailRow(
+                Icons.payment,
+                "Metode",
+                payment["payment_method"] ?? "-",
               ),
 
-              child: SizedBox(
+            if (payment != null)
+              detailRow(
+                Icons.credit_card,
+                "Status Bayar",
+                payment["payment_status"] ?? "-",
+              ),
 
-                width:
-                    double.infinity,
+            const SizedBox(height: 15),
 
-                height:50,
-
-                child: ElevatedButton(
-
-                  style:
-                      ElevatedButton.styleFrom(
-
-                    backgroundColor:
-                        Colors.amber,
-
-                    shape:
-                        RoundedRectangleBorder(
-
-                      borderRadius:
-                          BorderRadius.circular(
-                              15),
-
-                    ),
-
-                  ),
-
-                  onPressed: (){
-
-                    approveBooking(
-                        booking);
-
-                  },
-
-                  child: const Text(
-
-                    "ACC BOOKING",
-
-                    style: TextStyle(
-
-                      color: Colors.black,
-
-                      fontWeight:
-                          FontWeight.bold,
-
-                    ),
-
-                  ),
-
+            //----------------------------------
+            // Bukti Transfer
+            //----------------------------------
+            if (payment != null && payment["payment_proof"] != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  payment["payment_proof"],
+                  width: double.infinity,
+                  height: 200,
+                  fit: BoxFit.cover,
                 ),
-
               ),
 
-            )
+            const SizedBox(height: 15),
 
+            //----------------------------------
+            // Tombol Pending
+            //----------------------------------
+            if (booking["status"] == "pending")
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                      ),
+                      onPressed: () => showApproveDialog(booking),
+                      icon: const Icon(Icons.check, color: Colors.white),
+                      label: const Text(
+                        "Approve",
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(width: 10),
+
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                      ),
+                      onPressed: () => showRejectDialog(booking),
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      label: const Text(
+                        "Reject",
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+            //----------------------------------
+            // Tombol Approved
+            //----------------------------------
+            if (booking["status"] == "approved")
+              Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                      ),
+                      onPressed: () => showFinishDialog(booking),
+                      icon: const Icon(Icons.flag, color: Colors.white),
+                      label: const Text(
+                        "Selesaikan Booking",
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.chat),
+                      label: const Text("Buka Chat"),
+                      onPressed: () async {
+                        final room = await supabase
+                            .from("chat_rooms")
+                            .select()
+                            .eq("booking_id", booking["id"])
+                            .maybeSingle();
+
+                        if (!mounted) return;
+
+                        if (room == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text("Chat room belum tersedia"),
+                            ),
+                          );
+
+                          return;
+                        }
+
+                        // Navigasi ke chat
+                        // Akan kita lengkapi di Part 3B
+                      },
+                    ),
+                  ),
+                ],
+              ),
           ],
-
         ),
-
       ),
-
     );
-
   }
-      Widget legendItem(
-      Color color,
-      String text,
-    ) {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
+
+  //-------------------------------------------------------
+  // Detail Row
+  //-------------------------------------------------------
+
+  Widget detailRow(IconData icon, String title, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 14,
-            height: 14,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
+          Icon(icon, size: 18, color: Colors.green),
+
+          const SizedBox(width: 10),
+
+          SizedBox(
+            width: 90,
+            child: Text(
+              title,
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           ),
-          const SizedBox(width: 6),
+
+          Expanded(child: Text(value)),
+        ],
+      ),
+    );
+  }
+
+  //-------------------------------------------------------
+  // Empty Widget
+  //-------------------------------------------------------
+
+  Widget buildEmpty(String text) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.event_busy, size: 70, color: Colors.grey.shade400),
+
+          const SizedBox(height: 15),
+
           Text(
             text,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
+            style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
+          ),
+        ],
+      ),
+    );
+  }
+
+  //-------------------------------------------------------
+  // Booking List
+  //-------------------------------------------------------
+
+  Widget buildBookingList(List<Map<String, dynamic>> bookings) {
+    if (isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (bookings.isEmpty) {
+      return buildEmpty("Belum ada booking");
+    }
+
+    return RefreshIndicator(
+      onRefresh: refreshData,
+      child: ListView.builder(
+        padding: const EdgeInsets.only(top: 12, bottom: 30),
+        itemCount: bookings.length,
+        itemBuilder: (context, index) {
+          return buildBookingCard(bookings[index]);
+        },
+      ),
+    );
+  }
+
+  //-------------------------------------------------------
+  // Tab
+  //-------------------------------------------------------
+
+  Widget buildTab(String title, int total) {
+    return Tab(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+
+          const SizedBox(height: 4),
+
+          CircleAvatar(
+            radius: 10,
+            backgroundColor: Colors.white,
+            child: Text(
+              total.toString(),
+              style: const TextStyle(
+                fontSize: 11,
+                color: Colors.green,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
         ],
-      );
-    }
-    @override
-  Widget build(BuildContext context) {
-
-    return Scaffold(
-
-      backgroundColor: const Color(0xffF5F7FB),
-
-      body: isLoading
-
-          ? const Center(
-              child: CircularProgressIndicator(),
-            )
-
-          : RefreshIndicator(
-
-              onRefresh: loadData,
-
-              child: ListView(
-
-                padding: EdgeInsets.zero,
-
-                children: [
-
-                  //------------------------------------------------
-                  // HEADER
-                  //------------------------------------------------
-
-                  Container(
-
-                    padding: const EdgeInsets.fromLTRB(
-                      20,
-                      55,
-                      20,
-                      30,
-                    ),
-
-                    decoration: const BoxDecoration(
-
-                      gradient: LinearGradient(
-
-                        begin: Alignment.topLeft,
-
-                        end: Alignment.bottomRight,
-
-                        colors: [
-
-                          Color(0xff001DFF),
-
-                          Color(0xff4D73FF),
-
-                        ],
-
-                      ),
-
-                      borderRadius: BorderRadius.only(
-
-                        bottomLeft: Radius.circular(35),
-
-                        bottomRight: Radius.circular(35),
-
-                      ),
-
-                    ),
-
-                    child: Column(
-
-                      crossAxisAlignment:
-                          CrossAxisAlignment.start,
-
-                      children: [
-
-                        const Text(
-
-                          "Owner Schedule",
-
-                          style: TextStyle(
-
-                            color: Colors.white70,
-
-                            fontSize: 16,
-
-                          ),
-
-                        ),
-
-                        const SizedBox(height: 6),
-
-                        const Text(
-
-                          "Kelola Jadwal Booking",
-
-                          style: TextStyle(
-
-                            color: Colors.white,
-
-                            fontSize: 28,
-
-                            fontWeight: FontWeight.bold,
-
-                          ),
-
-                        ),
-
-                        const SizedBox(height: 25),
-
-                        Row(
-
-                          children: [
-
-                            statCard(
-
-                              title: "Booking",
-
-                              value:
-                                  totalBooking.toString(),
-
-                              icon:
-                                  Icons.calendar_month,
-
-                            ),
-
-                            const SizedBox(width: 12),
-
-                            statCard(
-
-                              title: "Pending",
-
-                              value:
-                                  pendingBooking.toString(),
-
-                              icon:
-                                  Icons.pending_actions,
-
-                            ),
-
-                            const SizedBox(width: 12),
-
-                            statCard(
-
-                              title: "Approved",
-
-                              value:
-                                  approvedBooking.toString(),
-
-                              icon:
-                                  Icons.verified,
-
-                            ),
-
-                          ],
-
-                        ),
-
-                      ],
-
-                    ),
-
-                  ),
-
-                  const SizedBox(height: 20),
-
-                                    //------------------------------------------------
-                  // CALENDAR
-                  //------------------------------------------------
-
-                  Padding(
-
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                    ),
-
-                    child: Container(
-
-                      decoration: BoxDecoration(
-
-                        color: Colors.white,
-
-                        borderRadius:
-                            BorderRadius.circular(25),
-
-                        boxShadow: const [
-
-                          BoxShadow(
-
-                            color: Colors.black12,
-
-                            blurRadius: 10,
-
-                            offset: Offset(0,4),
-
-                          )
-
-                        ],
-
-                      ),
-
-                      child: Padding(
-
-                        padding:
-                            const EdgeInsets.all(16),
-
-                        child: Column(
-
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
-
-                          children: [
-
-                            const Text(
-
-                              "Kalender Booking",
-
-                              style: TextStyle(
-
-                                fontSize: 20,
-
-                                fontWeight:
-                                    FontWeight.bold,
-
-                              ),
-
-                            ),
-
-                            const SizedBox(height: 15),
-
-                            TableCalendar(
-
-                              firstDay:
-                                  DateTime(2024),
-
-                              lastDay:
-                                  DateTime(2035),
-
-                              focusedDay:
-                                  focusedDay,
-
-                              selectedDayPredicate:
-                                  (day) {
-
-                                return isSameDay(
-                                  selectedDay,
-                                  day,
-                                );
-
-                              },
-
-                              onDaySelected:
-                                  (selected,
-                                      focused) {
-
-                                setState(() {
-
-                                  selectedDay =
-                                      selected;
-
-                                  focusedDay =
-                                      focused;
-
-                                });
-
-                              },
-
-                              headerStyle:
-                                  const HeaderStyle(
-
-                                titleCentered:
-                                    true,
-
-                                formatButtonVisible:
-                                    false,
-
-                              ),
-
-                              calendarStyle:
-                                  CalendarStyle(
-
-                                todayDecoration:
-
-                                    const BoxDecoration(
-
-                                  color:
-                                      Color(
-                                          0xff001DFF),
-
-                                  shape:
-                                      BoxShape.circle,
-
-                                ),
-
-                                selectedDecoration:
-
-                                    const BoxDecoration(
-
-                                  color:
-                                      Colors.red,
-
-                                  shape:
-                                      BoxShape.circle,
-
-                                ),
-
-                              ),
-
-                              calendarBuilders:
-
-                                  CalendarBuilders(
-
-                                defaultBuilder:
-
-                                    (
-                                  context,
-                                  day,
-                                  focusedDay,
-                                ) {
-
-                                  final color =
-                                      getCalendarColor(
-                                    day,
-                                  );
-
-                                  return Container(
-
-                                    margin:
-                                        const EdgeInsets
-                                            .all(4),
-
-                                    decoration:
-
-                                        BoxDecoration(
-
-                                      color: color,
-
-                                      shape: BoxShape.circle,
-
-                                    ),
-
-                                    child: Center(
-
-                                      child: Text(
-
-                                        "${day.day}",
-
-                                        style:
-                                            const TextStyle(
-
-                                          color:
-                                              Colors.white,
-
-                                          fontWeight:
-                                              FontWeight.bold,
-
-                                        ),
-
-                                      ),
-
-                                    ),
-
-                                  );
-
-                                },
-
-                              ),
-
-                            ),
-
-                            const SizedBox(height:20),
-
-                            const Divider(),
-
-                            const SizedBox(height:15),
-
-                            Wrap(
-
-                              spacing: 18,
-
-                              runSpacing: 12,
-
-                              alignment:
-                                  WrapAlignment.center,
-
-                              children: [
-
-                                legendItem(
-
-                                  Colors.blue,
-
-                                  "Tersedia",
-
-                                ),
-
-                                legendItem(
-
-                                  Colors.amber,
-
-                                  "Menunggu ACC",
-
-                                ),
-
-                                legendItem(
-
-                                  Colors.grey,
-
-                                  "Sudah ACC / Lewat",
-
-                                ),
-
-                              ],
-
-                            ),
-
-                          ],
-
-                        ),
-
-                      ),
-
-                    ),
-
-                  ),
-
-                  const SizedBox(height:25),
-
-                                    //------------------------------------------------
-                  // LIST BOOKING
-                  //------------------------------------------------
-
-                  Padding(
-
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                    ),
-
-                    child: bookings.isEmpty
-
-                        ? Container(
-
-                            padding:
-                                const EdgeInsets.all(30),
-
-                            decoration: BoxDecoration(
-
-                              color: Colors.white,
-
-                              borderRadius:
-                                  BorderRadius.circular(20),
-
-                              boxShadow: const [
-
-                                BoxShadow(
-
-                                  color: Colors.black12,
-
-                                  blurRadius: 8,
-
-                                )
-
-                              ],
-
-                            ),
-
-                            child: const Center(
-
-                              child: Column(
-
-                                children: [
-
-                                  Icon(
-
-                                    Icons.event_busy,
-
-                                    size: 70,
-
-                                    color: Colors.grey,
-
-                                  ),
-
-                                  SizedBox(height: 15),
-
-                                  Text(
-
-                                    "Belum ada booking",
-
-                                    style: TextStyle(
-
-                                      fontSize: 18,
-
-                                      fontWeight: FontWeight.bold,
-
-                                    ),
-
-                                  ),
-
-                                  SizedBox(height: 6),
-
-                                  Text(
-
-                                    "Booking pelanggan akan muncul di sini.",
-
-                                    textAlign: TextAlign.center,
-
-                                    style: TextStyle(
-
-                                      color: Colors.grey,
-
-                                    ),
-
-                                  ),
-
-                                ],
-
-                              ),
-
-                            ),
-
-                          )
-
-                        : Column(
-
-                            children:
-
-                                bookings
-
-                                    .map<Widget>(
-
-                                      (booking) => bookingCard(
-
-                                        booking,
-
-                                      ),
-
-                                    )
-
-                                    .toList(),
-
-                          ),
-
-                  ),
-
-                  const SizedBox(height:30),
-
-                ],
-
-              ),
-
-            ),
-
+      ),
     );
-
   }
 
+  //-------------------------------------------------------
+  // Open Chat
+  //-------------------------------------------------------
+
+  Future<void> openChat(Map<String, dynamic> booking) async {
+    try {
+      final room = await supabase
+          .from("chat_rooms")
+          .select()
+          .eq("booking_id", booking["id"])
+          .maybeSingle();
+
+      if (room == null) {
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Chat room belum tersedia")),
+        );
+
+        return;
+      }
+
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => OwnerChatRoomScreen(
+            roomId: room["id"],
+            customerName: customerName(booking),
+            customerPhoto: booking["profiles"]?["avatar_url"],
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  //-------------------------------------------------------
+  // BUILD
+  //-------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 5,
+      child: Scaffold(
+        backgroundColor: Colors.grey.shade100,
+
+        appBar: AppBar(
+          elevation: 0,
+          backgroundColor: Colors.green,
+          foregroundColor: Colors.white,
+          title: const Text("Jadwal Booking"),
+          bottom: TabBar(
+            isScrollable: true,
+            indicatorColor: Colors.white,
+            tabs: [
+              buildTab("Semua", allBookings.length),
+
+              buildTab("Pending", pendingBookings.length),
+
+              buildTab("Approved", approvedBookings.length),
+
+              buildTab("Rejected", rejectedBookings.length),
+
+              buildTab("Finished", finishedBookings.length),
+            ],
+          ),
+        ),
+
+        body: TabBarView(
+          children: [
+            buildBookingList(allBookings),
+
+            buildBookingList(pendingBookings),
+
+            buildBookingList(approvedBookings),
+
+            buildBookingList(rejectedBookings),
+
+            buildBookingList(finishedBookings),
+          ],
+        ),
+      ),
+    );
+  }
 }

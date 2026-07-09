@@ -1,660 +1,388 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../models/field_model.dart';
-import '../../services/auth_service.dart';
 import '../../services/field_service.dart';
-
-import '../../widgets/customer/field_card.dart';
-import '../../widgets/customer/category_chip.dart';
-import '../../widgets/customer/promo_card.dart';
-import '../../widgets/customer/section_title.dart';
-
 import 'field_detail_screen.dart';
+import '../../services/auth_service.dart';
 
 class CustomerHomeScreen extends StatefulWidget {
   const CustomerHomeScreen({super.key});
 
   @override
-  State<CustomerHomeScreen> createState() =>
-      _CustomerHomeScreenState();
+  State<CustomerHomeScreen> createState() => _CustomerHomeScreenState();
 }
 
-class _CustomerHomeScreenState
-    extends State<CustomerHomeScreen> {
-
-  //--------------------------------------------------
-  // SERVICE
-  //--------------------------------------------------
-
-  final FieldService fieldService =
-      FieldService();
-
-  //--------------------------------------------------
-  // CONTROLLER
-  //--------------------------------------------------
-
-  final TextEditingController searchController =
-      TextEditingController();
-
-  final PageController promoController =
-      PageController();
-
-  //--------------------------------------------------
-  // DATA
-  //--------------------------------------------------
+class _CustomerHomeScreenState extends State<CustomerHomeScreen> {
+  final FieldService fieldService = FieldService();
 
   String userName = "Customer";
+  final TextEditingController searchController = TextEditingController();
+
+  List<FieldModel> allFields = [];
+  List<FieldModel> filteredFields = [];
 
   bool isLoading = true;
 
-  List<FieldModel> allFields = [];
-
-  List<FieldModel> filteredFields = [];
-
-  //--------------------------------------------------
-  // FILTER
-  //--------------------------------------------------
-
-  String selectedCategory = "Semua";
-
-  final List<String> categories = [
-
-    "Semua",
-
-    "Futsal",
-
-    "Badminton",
-
-    "Basket",
-
-    "Tennis",
-
-    "Mini Soccer",
-
-  ];
-
-  //--------------------------------------------------
-  // PROMO
-  //--------------------------------------------------
-
-  final List<Map<String, dynamic>> promos = [
-
-    {
-
-      "title": "Diskon 30%",
-
-      "subtitle": "Booking Weekend",
-
-      "color": const Color(0xff001DFF),
-
-    },
-
-    {
-
-      "title": "Cashback 20%",
-
-      "subtitle": "Bayar Dengan QRIS",
-
-      "color": Colors.green,
-
-    },
-
-    {
-
-      "title": "Gratis Air Mineral",
-
-      "subtitle": "Minimal Booking 3 Jam",
-
-      "color": Colors.orange,
-
-    },
-
-  ];
-
-  //--------------------------------------------------
-  // INIT
-  //--------------------------------------------------
+  String selectedFilter = "Terdekat";
 
   @override
   void initState() {
-
     super.initState();
 
-    loadInitialData();
-
+    loadUserName();
+    loadFields();
   }
 
-  //--------------------------------------------------
-  // LOAD
-  //--------------------------------------------------
-
-  Future<void> loadInitialData() async {
-
-    setState(() {
-
-      isLoading = true;
-
-    });
-
+  Future<void> loadUserName() async {
     try {
+      final name = await AuthService().getCurrentUserName();
 
-      userName =
-          await AuthService()
-              .getCurrentUserName();
-
-      allFields =
-          await fieldService.getFields();
-
-      filteredFields =
-          List.from(allFields);
-
-      applyCategory("Semua");
-
+      setState(() {
+        userName = name;
+      });
     } catch (e) {
-
-      debugPrint(e.toString());
-
+      print(e);
     }
-
-    if (!mounted) return;
-
-    setState(() {
-
-      isLoading = false;
-
-    });
-
   }
 
-  //--------------------------------------------------
-  // SEARCH
-  //--------------------------------------------------
+  Future<void> loadFields() async {
+    try {
+      allFields = await fieldService.getFields();
+
+      filteredFields = List.from(allFields);
+
+      applyFilter("Terdekat");
+
+      setState(() {
+        isLoading = false;
+      });
+    } catch (e) {
+      print("ERROR LOAD FIELD");
+      print(e);
+
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
 
   void searchField(String keyword) {
+    if (keyword.isEmpty) {
+      filteredFields = List.from(allFields);
 
-    if (keyword.trim().isEmpty) {
-
-      applyCategory(selectedCategory);
+      applyFilter(selectedFilter);
 
       return;
-
     }
 
-    filteredFields =
-        allFields.where((field) {
-
-      return field.fieldName
-                  .toLowerCase()
-                  .contains(
-                    keyword.toLowerCase(),
-                  ) ||
-
-          field.location
-              .toLowerCase()
-              .contains(
-                keyword.toLowerCase(),
-              );
-
+    filteredFields = allFields.where((field) {
+      return field.fieldName.toLowerCase().contains(keyword.toLowerCase()) ||
+          field.location.toLowerCase().contains(keyword.toLowerCase());
     }).toList();
 
     setState(() {});
   }
 
-  //--------------------------------------------------
-  // FILTER
-  //--------------------------------------------------
+  void applyFilter(String filter) {
+    selectedFilter = filter;
 
-  void applyCategory(
-      String category) {
+    filteredFields = List.from(allFields);
 
-    selectedCategory = category;
+    if (filter == "Termurah") {
+      filteredFields.sort((a, b) => a.price.compareTo(b.price));
+    }
 
-    filteredFields =
-        List.from(allFields);
+    if (filter == "Terdekat") {
+      filteredFields.sort((a, b) => b.rating.compareTo(a.rating));
+    }
 
-    if (category == "Semua") {
-
+    if (filter == "Fasilitas Lengkap") {
       filteredFields.sort(
-        (a, b) =>
-            b.rating.compareTo(
-              a.rating,
-            ),
+        (a, b) => b.facility.length.compareTo(a.facility.length),
       );
-
-    }
-
-    if (category == "Futsal") {
-
-      filteredFields =
-          filteredFields.where((e) {
-
-        return e.fieldName
-            .toLowerCase()
-            .contains("futsal");
-
-      }).toList();
-
-    }
-
-    if (category == "Badminton") {
-
-      filteredFields =
-          filteredFields.where((e) {
-
-        return e.fieldName
-            .toLowerCase()
-            .contains("badminton");
-
-      }).toList();
-
-    }
-
-    if (category == "Basket") {
-
-      filteredFields =
-          filteredFields.where((e) {
-
-        return e.fieldName
-            .toLowerCase()
-            .contains("basket");
-
-      }).toList();
-
-    }
-
-    if (category == "Tennis") {
-
-      filteredFields =
-          filteredFields.where((e) {
-
-        return e.fieldName
-            .toLowerCase()
-            .contains("tennis");
-
-      }).toList();
-
-    }
-
-    if (category == "Mini Soccer") {
-
-      filteredFields =
-          filteredFields.where((e) {
-
-        return e.fieldName
-            .toLowerCase()
-            .contains("soccer");
-
-      }).toList();
-
     }
 
     setState(() {});
   }
 
-  //--------------------------------------------------
-  // OPEN DETAIL
-  //--------------------------------------------------
+  Widget buildFilterButton(String title) {
+    final isSelected = selectedFilter == title;
 
-  void openDetail(
-      FieldModel field) {
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => FieldDetailScreen(
-          fieldId: field.id,
+    return GestureDetector(
+      onTap: () {
+        applyFilter(title);
+      },
+      child: Container(
+        margin: const EdgeInsets.only(right: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.amber : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          title,
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: isSelected ? Colors.black : Colors.grey,
+          ),
         ),
       ),
     );
   }
 
-    //--------------------------------------------------
-  // HEADER
-  //--------------------------------------------------
-
-  Widget buildHeader() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(
-        20,
-        60,
-        20,
-        30,
-      ),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Color(0xff001DFF),
-            Color(0xff3559FF),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.vertical(
-          bottom: Radius.circular(35),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
-        children: [
-
-          //----------------------------------
-          // USER
-          //----------------------------------
-
-          Row(
-            children: [
-
-              const CircleAvatar(
-                radius: 27,
-                backgroundColor: Colors.white,
-                child: Icon(
-                  Icons.person,
-                  color: Color(0xff001DFF),
-                  size: 28,
-                ),
-              ),
-
-              const SizedBox(width: 12),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-
-                    const Text(
-                      "Selamat Datang 👋",
-                      style: TextStyle(
-                        color: Colors.white70,
-                      ),
-                    ),
-
-                    Text(
-                      userName,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 21,
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              IconButton(
-                onPressed: () {},
-                icon: const Icon(
-                  Icons.notifications_none,
-                  color: Colors.white,
-                ),
-              )
-            ],
-          ),
-
-          const SizedBox(height: 28),
-
-          const Text(
-            "Cari Lapangan\nFavoritmu",
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 30,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          //----------------------------------
-          // SEARCH
-          //----------------------------------
-
-          TextField(
-            controller: searchController,
-            onChanged: searchField,
-            decoration: InputDecoration(
-
-              filled: true,
-
-              fillColor: Colors.white,
-
-              hintText: "Cari nama lapangan...",
-
-              prefixIcon:
-                  const Icon(Icons.search),
-
-              suffixIcon:
-                  const Icon(Icons.tune),
-
-              border: OutlineInputBorder(
-                borderRadius:
-                    BorderRadius.circular(18),
-                borderSide:
-                    BorderSide.none,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-    //--------------------------------------------------
-  // PROMO
-  //--------------------------------------------------
-
-  Widget buildPromoSlider() {
-    return SizedBox(
-      height: 170,
-      child: PageView.builder(
-        controller: promoController,
-        itemCount: promos.length,
-        itemBuilder: (context, index) {
-          final promo = promos[index];
-
-          return PromoCard(
-            title: promo["title"],
-            subtitle: promo["subtitle"],
-            color: promo["color"],
-          );
-        },
-      ),
-    );
-  }
-
-    //--------------------------------------------------
-  // CATEGORY
-  //--------------------------------------------------
-
-  Widget buildCategory() {
-    return SizedBox(
-      height: 48,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: categories.length,
-        padding:
-            const EdgeInsets.symmetric(
-          horizontal: 16,
-        ),
-        itemBuilder: (context, index) {
-          return CategoryChip(
-            title: categories[index],
-            selected:
-                selectedCategory ==
-                    categories[index],
-            onTap: () {
-              applyCategory(
-                  categories[index]);
-            },
-          );
-        },
-      ),
-    );
-  }
-
-
-    //--------------------------------------------------
-  // SECTION
-  //--------------------------------------------------
-
-  Widget buildRecommendationTitle() {
-    return const Padding(
-      padding:
-          EdgeInsets.symmetric(
-        horizontal: 18,
-      ),
-      child: SectionTitle(
-        title: "Rekomendasi Lapangan",
-        subtitle:
-            "Lapangan dengan rating terbaik",
-      ),
-    );
-  }
-
-    //--------------------------------------------------
-  // FIELD LIST
-  //--------------------------------------------------
-
-  Widget buildFieldList() {
-    if (filteredFields.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(40),
-        child: Center(
-          child: Text(
-            "Belum ada lapangan",
-            style: TextStyle(
-              fontSize: 16,
-            ),
-          ),
-        ),
-      );
-    }
-
-    return ListView.builder(
-      shrinkWrap: true,
-      physics:
-          const NeverScrollableScrollPhysics(),
-      itemCount: filteredFields.length,
-      padding: const EdgeInsets.all(16),
-      itemBuilder: (context, index) {
-        final field =
-            filteredFields[index];
-
-        return Padding(
-          padding:
-              const EdgeInsets.only(
-            bottom: 18,
-          ),
-          child: FieldCard(
-            field: field,
-            onTap: () =>
-                openDetail(field),
-          ),
+  Widget buildFieldCard(FieldModel field) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => FieldDetailScreen(fieldId: field.id)),
         );
       },
+      child: Container(
+        width: 180,
+        margin: const EdgeInsets.only(right: 15),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6)],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(18),
+              ),
+              child: field.imageUrl.isNotEmpty
+                  ? Image.network(
+                      field.imageUrl,
+                      height: 120,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                    )
+                  : Image.asset(
+                      "assets/images/futsal.jpg",
+                      height: 120,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                    ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    field.fieldName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+
+                  const SizedBox(height: 5),
+
+                  Text(
+                    field.location,
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  Row(
+                    children: [
+                      const Icon(Icons.star, color: Colors.amber, size: 18),
+
+                      Text(field.rating.toString()),
+
+                      const Spacer(),
+
+                      Text(
+                        "Rp ${field.price}",
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
-
-  
-    //--------------------------------------------------
-  // BUILD
-  //--------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
-
-    SystemChrome.setSystemUIOverlayStyle(
-
-      const SystemUiOverlayStyle(
-
-        statusBarColor: Colors.transparent,
-
-        statusBarIconBrightness:
-            Brightness.light,
-
-      ),
-    );
-
     return Scaffold(
-
       backgroundColor: Colors.grey.shade100,
 
       body: SafeArea(
+        child: isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+                child: Column(
+                  children: [
+                    // HEADER
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(20),
+                      decoration: const BoxDecoration(
+                        color: Color(0xff001DFF),
+                        borderRadius: BorderRadius.only(
+                          bottomLeft: Radius.circular(30),
+                          bottomRight: Radius.circular(30),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const CircleAvatar(
+                                backgroundColor: Colors.white,
+                                child: Icon(
+                                  Icons.person,
+                                  color: Color(0xff001DFF),
+                                ),
+                              ),
 
-        top: false,
+                              const SizedBox(width: 10),
 
-        child: RefreshIndicator(
+                              Text(
+                                "Halo, $userName",
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
 
-          onRefresh: loadInitialData,
+                              const Spacer(),
 
-          child: isLoading
+                              IconButton(
+                                onPressed: () {},
+                                icon: const Icon(
+                                  Icons.notifications,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
 
-              ? const Center(
-                  child:
-                      CircularProgressIndicator(),
-                )
+                          const SizedBox(height: 20),
 
-              : SingleChildScrollView(
+                          const Text(
+                            "Mau sewa lapangan\ndimana?",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
 
-                  physics:
-                      const AlwaysScrollableScrollPhysics(),
+                          const SizedBox(height: 20),
 
-                  child: Column(
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: searchController,
 
-                    crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                                  onChanged: (value) {
+                                    searchField(value);
+                                  },
 
-                    children: [
+                                  decoration: InputDecoration(
+                                    hintText: "Cari Lapangan",
+                                    prefixIcon: const Icon(Icons.search),
+                                    filled: true,
+                                    fillColor: Colors.white,
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                  ),
+                                ),
+                              ),
 
-                      //---------------------------------
-                      // HEADER
-                      //---------------------------------
+                              const SizedBox(width: 10),
 
-                      buildHeader(),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 15,
+                                  vertical: 15,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Text("Jakarta"),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
 
-                      const SizedBox(height: 20),
+                    const SizedBox(height: 20),
 
-                      //---------------------------------
-                      // PROMO
-                      //---------------------------------
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          buildFilterButton("Terdekat"),
+                          buildFilterButton("Termurah"),
+                          buildFilterButton("Fasilitas Lengkap"),
+                        ],
+                      ),
+                    ),
 
-                      buildPromoSlider(),
+                    const SizedBox(height: 20),
 
-                      const SizedBox(height: 24),
-
-                      //---------------------------------
-                      // CATEGORY
-                      //---------------------------------
-
-                      buildCategory(),
-
-                      const SizedBox(height: 28),
-
-                      //---------------------------------
-                      // TITLE
-                      //---------------------------------
-
-                      buildRecommendationTitle(),
-
-                      const SizedBox(height: 14),
-
-                      //---------------------------------
-                      // FIELD
-                      //---------------------------------
-
-                      buildFieldList(),
-
-                      const SizedBox(height: 40),
-
-                    ],
-                  ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          const Text(
+                            "Rekomendasi Untukmu",
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed: () {},
+                            child: const Text("Lihat Semua"),
+                          ),
+                        ],
+                      ),
+                    ),
+                    filteredFields.isEmpty
+                        ? const Padding(
+                            padding: EdgeInsets.all(30),
+                            child: Center(
+                              child: Text(
+                                "Belum ada data lapangan",
+                                style: TextStyle(fontSize: 16),
+                              ),
+                            ),
+                          )
+                        : SizedBox(
+                            height: 250,
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              padding: const EdgeInsets.all(16),
+                              itemCount: filteredFields.length,
+                              itemBuilder: (context, index) {
+                                return buildFieldCard(filteredFields[index]);
+                              },
+                            ),
+                          ),
+                  ],
                 ),
-        ),
+              ),
       ),
     );
   }
 }
-

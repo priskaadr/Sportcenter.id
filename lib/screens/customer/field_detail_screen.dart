@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../booking/booking_screen.dart';
 
 class FieldDetailScreen extends StatefulWidget {
   final String fieldId;
@@ -811,7 +812,7 @@ String get imageUrl {
 
                             .split(",")
 
-                            .map(
+                            .map<Widget>(
 
                               (e) => buildFacility(
 
@@ -978,7 +979,9 @@ String get imageUrl {
     }
 
     return Column(
-      children: schedules.take(5).map((schedule) {
+  children: schedules
+      .take(5)
+      .map<Widget>((schedule) {
         final booked =
             schedule["status"] == "booked" ||
             schedule["status"] == "approved";
@@ -998,10 +1001,9 @@ String get imageUrl {
                 booked
                     ? Icons.close
                     : Icons.check_circle,
-                color:
-                    booked
-                        ? Colors.red
-                        : Colors.green,
+                color: booked
+                    ? Colors.red
+                    : Colors.green,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -1012,19 +1014,19 @@ String get imageUrl {
               Text(
                 booked ? "Terisi" : "Kosong",
                 style: TextStyle(
-                  color:
-                      booked
-                          ? Colors.red
-                          : Colors.green,
+                  color: booked
+                      ? Colors.red
+                      : Colors.green,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ],
           ),
         );
-      }).toList(),
-    );
-  }
+      })
+      .toList(),
+);
+}
 
   Widget buildBottomBar() {
     return Container(
@@ -1058,15 +1060,18 @@ String get imageUrl {
                   ),
                 ),
                 onPressed: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
 
-                  ScaffoldMessenger.of(context)
-                      .showSnackBar(
                     const SnackBar(
+
                       content: Text(
-                        "Halaman Chat akan dibuka",
+                        "Silakan lakukan booking terlebih dahulu untuk menghubungi pemilik."
                       ),
+
                     ),
+
                   );
+
                 },
               ),
             ),
@@ -1087,18 +1092,16 @@ String get imageUrl {
                         BorderRadius.circular(16),
                   ),
                 ),
-                onPressed: () {
-
-                  ScaffoldMessenger.of(context)
-                      .showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        "Menu Booking akan dibuat selanjutnya",
-                      ),
+               onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => BookingScreen(
+                      fieldId: field!["id"],
                     ),
-                  );
-
-                },
+                  ),
+                );
+              },
                 child: Text(
                   "Booking • ${formatPrice(price)}",
                   style: const TextStyle(

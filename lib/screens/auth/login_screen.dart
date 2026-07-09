@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import 'register_screen.dart';
-import '../customer/customer_home_screen.dart';
+import '../customer/customer_dashboard_screen.dart';
 import '../owner/owner_dashboard_screen.dart';
 import '../admin/admin_dashboard_screen.dart';
 
@@ -127,7 +127,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                const CustomerHomeScreen(),
+                                const CustomerDashboardScreen(),
                           ),
                         );
 
